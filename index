@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>MICRO RALLYCROSS</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Courier New',monospace}
+canvas#c{display:block;position:fixed;top:0;left:0;width:100%;height:100%;touch-action:none}
+
+/* HUD */
+#hud{
+  position:fixed;top:0;left:0;right:0;
+  pointer-events:none;z-index:10;padding:14px 18px;
+  display:flex;justify-content:space-between;align-items:flex-start;
+  background:linear-gradient(180deg,rgba(0,8,0,.75) 0%,transparent 100%);
+}
+.hud-left,.hud-right{display:flex;flex-direction:column;gap:8px}
+.hud-row{display:flex;align-items:center;gap:8px}
+.hud-icon{font-size:14px;opacity:.7}
+.hud-val{font-size:18px;letter-spacing:2px;color:#fff;text-shadow:0 0 10px #0f0}
+.speed-bar{width:180px;height:8px;background:#111;border:1px solid #0f0;overflow:hidden}
+.speed-fill{height:100%;background:linear-gradient(90deg,#0f0,#8f0);transition:width .05s}
+.lap{font-size:11px;letter-spacing:4px;color:#0a3}
+
+/* Mini-map */
+#minimap{
+  position:fixed;bottom:20px;left:20px;
+  width:140px;height:140px;border:2px solid #0a3;
+  background:rgba(0,20,0,.85);border-radius:4px;
+  pointer-events:none;z-index:10;overflow:hidden;
+}
+#mini-c{display:block;width:140px;height:140px}
+
+/* Centre HUD */
+#centre{
+  position:fixed;top:18px;left:50%;transform:translateX(-50%);
+  text-align:center;pointer-events:none;z-index:10;
+}
+#lap-info{font-size:13px;letter-spacing:6px;color:#0a3}
+#time{font-size:28px;color:#fff;text-shadow:0 0 20px #0f0}
+
+/* Screens */
+.scr{
+  position:fixed;inset:0;z-index:50;
+  background:rgba(0,15,0,.93);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;backdrop-filter:blur(6px);
+  transition:opacity .3s;
+}
+.scr.off{opacity:0;pointer-events:none}
+.title{font-size:clamp(42px,7vw,72px);letter-spacing:8px;color:#0f0;
+  text-shadow:0 0 40px #0f0,0 0 80px #080}
+.subtitle{font-size:12px;letter-spacing:5px;color:#0a3;margin-bottom:40px}
+.go-btn{
+  font-size:13px;letter-spacing:5px;color:#0f0;
+  background:transparent;border:2px solid #0a3;
+  padding:16px 50px;cursor:pointer;transition:all .3s;
+}
+.go-btn:hover{background:#0a3;color:#000}
+
+/* Finish screen */
+#finish{
+  position:fixed;inset:0;z-index:55;background:rgba(0,15,0,.95);
+  display:none;flex-direction:column;align-items:center;justify-content:center;
+}
+#finish.show{display:flex}
+.finish-time{font-size:56px;color:#0f0;text-shadow:0 0 30px #0f0}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- HUD -->
+<div id="hud">
+  <div class="hud-left">
+    <div class="hud-row">
+      <span class="hud-icon">↑</span>
+      <div class="speed-bar"><div class="speed-fill" id="speed-fill" style="width:0%"></div></div>
+    </div>
+    <div class="hud-row">
+      <span class="hud-val" id="speed-val">000</span>
+      <span style="font-size:11px;color:#0a3">KM/H</span>
+    </div>
+  </div>
+  
+  <div id="centre">
+    <div class="lap" id="lap-info">LAP <span id="lap-num">1</span>/3</div>
+    <div id="time">0:00.00</div>
+  </div>
+  
+  <div class="hud-right">
+    <div class="hud-val" id="best-time" style="text-align:right">BEST: —</div>
+  </div>
+</div>
+
+<!-- Mini-map -->
+<div id="minimap">
+  <canvas id="mini-c" width="140" height="140"></canvas>
+</div>
+
+<!-- Title -->
+<div id="title-scr" class="scr">
+  <div class="title">MICRO<br>RALLYCROSS</div>
+  <div class="subtitle">3‑LAP TIME TRIAL • DIRT &amp; ASPHALT</div>
+  <div style="margin:30px 0;font-size:11px;letter-spacing:3px;color:#0a3">
+    ↑ ACCELERATE  ↓ BRAKE  ← → STEER  SPACE HANDBRAKE
+  </div>
+  <button class="go-btn" id="start-btn">START STAGE</button>
+  <div style="margin-top:40px;font-size:10px;color:#0a3">HIGH SCORE SAVED LOCALLY</div>
+</div>
+
+<!-- Finish -->
+<div id="finish">
+  <div style="font-size:13px;letter-spacing:6px;color:#0a3;margin-bottom:10px">STAGE COMPLETE</div>
+  <div class="finish-time" id="final-time">0:00.00</div>
+  <div id="final-lap" style="font-size:14px;color:#0f0;margin:10px 0"></div>
+  <button class="go-btn" id="retry-btn" style="margin-top:30px">TRY AGAIN</button>
+</div>
+
+<script>
+'use strict';
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const miniCanvas = document.getElementById('mini-c');
+const mctx = miniCanvas.getContext('2d');
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ── AUDIO ─────────────────────────────────────
+let ac = null;
+function initAudio() {
+  if (ac) return;
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playEngine(pitch) {
+  if (!ac) return;
+  const o = ac.createOscillator();
+  const g = ac.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(80 + pitch * 120, ac.currentTime);
+  g.gain.value = 0.12;
+  const f = ac.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.value = 800;
+  o.connect(f); f.connect(g); g.connect(ac.destination);
+  o.start();
+  setTimeout(() => { o.stop(); }, 60);
+}
+function playScreech() {
+  if (!ac) return;
+  const o = ac.createOscillator();
+  o.type = 'sawtooth'; o.frequency.value = 420;
+  const g = ac.createGain(); g.gain.value = 0.25;
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.6);
+  o.connect(g); g.connect(ac.destination);
+  o.start(); o.stop(ac.currentTime + 0.6);
+}
+function playFinish() {
+  if (!ac) return;
+  [660,880,1100].forEach((f,i) => setTimeout(() => {
+    const o = ac.createOscillator(); o.frequency.value = f;
+    const g = ac.createGain(); g.gain.value = 0.2;
+    o.connect(g); g.connect(ac.destination); o.start();
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.8);
+    o.stop(ac.currentTime + 0.8);
+  }, i*90));
+}
+
+// ── TRACK DEFINITION ─────────────────────────────
+const TRACK_POINTS = [
+  {x:-1100, y:  200}, {x:-600, y:  800},
+  {x:   0, y: 1100}, {x: 700, y:  600},
+  {x:1200, y:   50}, {x:1100, y:-700},
+  {x: 400, y:-1100}, {x:-700, y:-900},
+  {x:-1200,y:-300}
+];
+const ROAD_WIDTH = 110;
+const SHOULDER = 70;
+let trackLength = 0;
+
+// Pre-calculate track length for progress
+function calcTrackLength() {
+  trackLength = 0;
+  for (let i = 0; i < TRACK_POINTS.length; i++) {
+    const a = TRACK_POINTS[i];
+    const b = TRACK_POINTS[(i+1)%TRACK_POINTS.length];
+    trackLength += Math.hypot(b.x-a.x, b.y-a.y);
+  }
+}
+
+// ── CAR ──────────────────────────────────────────
+let car = {
+  wx: TRACK_POINTS[0].x,
+  wy: TRACK_POINTS[0].y,
+  vx: 0, vy: 0,
+  angle: Math.PI * 0.3,
+  lap: 1,
+  lapTime: 0,
+  totalTime: 0,
+  crossedFinish: false
+};
+let bestTime = localStorage.getItem('microRallyBest') || 999999;
+let currentLapStart = 0;
+
+// ── GAME STATE ───────────────────────────────────
+let state = 'title';
+let globalT = 0;
+let particles = [];
+let keys = {};
+let lapTimes = [0,0,0];
+
+// ── INPUT ────────────────────────────────────────
+window.addEventListener('keydown', e => { keys[e.key] = true; });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// Touch support
+const touch = {up:false, down:false, left:false, right:false, brake:false};
+if ('ontouchstart' in window) {
+  document.getElementById('hud').innerHTML += `
+    <div style="position:fixed;bottom:20px;right:20px;display:flex;gap:12px;z-index:15">
+      <div style="width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;font-size:22px" id="t-up">↑</div>
+      <div style="width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;font-size:22px" id="t-brake">↓</div>
+    </div>`;
+  // Simple touch handlers would be added but kept keyboard primary for precision
+}
+
+// ── PARTICLES ────────────────────────────────────
+function spawnDust(wx, wy, angle) {
+  for (let i = 0; i < 6; i++) {
+    const a = angle + Math.PI + (Math.random()-0.5)*1.2;
+    particles.push({
+      wx, wy,
+      vx: Math.cos(a) * (2 + Math.random()*3),
+      vy: Math.sin(a) * (2 + Math.random()*3),
+      life: 22 + Math.random()*18,
+      hue: 28,
+      size: 3 + Math.random()*4
+    });
+  }
+}
+
+// ── DISTANCE TO TRACK ────────────────────────────
+function distToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len2 = dx*dx + dy*dy;
+  if (len2 === 0) return Math.hypot(px-x1, py-y1);
+  let t = ((px-x1)*dx + (py-y1)*dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const projX = x1 + t*dx;
+  const projY = y1 + t*dy;
+  return Math.hypot(px-projX, py-projY);
+}
+
+function isOffTrack(wx, wy) {
+  let minDist = Infinity;
+  for (let i = 0; i < TRACK_POINTS.length; i++) {
+    const a = TRACK_POINTS[i];
+    const b = TRACK_POINTS[(i+1)%TRACK_POINTS.length];
+    const d = distToSegment(wx, wy, a.x, a.y, b.x, b.y);
+    if (d < minDist) minDist = d;
+  }
+  return minDist > ROAD_WIDTH/2 + 12;
+}
+
+// ── LAP CHECK ────────────────────────────────────
+const FINISH_X1 = TRACK_POINTS[0].x - 30;
+const FINISH_X2 = TRACK_POINTS[0].x + 30;
+const FINISH_Y  = TRACK_POINTS[0].y;
+
+function checkLap() {
+  const crossed = car.wy < FINISH_Y + 40 && car.wy > FINISH_Y - 40 &&
+                  car.wx > FINISH_X1 && car.wx < FINISH_X2 &&
+                  car.vy < 0; // moving upward through finish
+  
+  if (crossed && !car.crossedFinish) {
+    car.crossedFinish = true;
+    const lapDuration = globalT - currentLapStart;
+    lapTimes[car.lap-1] = lapDuration;
+    
+    if (car.lap === 3) {
+      car.totalTime = lapTimes.reduce((a,b)=>a+b,0);
+      finishRace();
+    } else {
+      car.lap++;
+      currentLapStart = globalT;
+      document.getElementById('lap-num').textContent = car.lap;
+    }
+  }
+  if (!crossed) car.crossedFinish = false;
+}
+
+// ── FINISH ───────────────────────────────────────
+function finishRace() {
+  state = 'finished';
+  document.getElementById('finish').classList.add('show');
+  const totalSec = Math.floor(car.totalTime / 60);
+  const totalMs = Math.floor((car.totalTime % 60) * 100 / 60);
+  const displayTime = `${totalSec}:${totalMs.toString().padStart(2,'0')}`;
+  document.getElementById('final-time').textContent = displayTime;
+  
+  if (car.totalTime < bestTime) {
+    bestTime = car.totalTime;
+    localStorage.setItem('microRallyBest', bestTime);
+  }
+  document.getElementById('best-time').textContent = `BEST: ${Math.floor(bestTime/60)}:${Math.floor((bestTime%60)*100/60).toString().padStart(2,'0')}`;
+}
+
+// ── DRAW TRACK ───────────────────────────────────
+function drawTrack() {
+  ctx.save();
+  
+  // Grass background
+  ctx.fillStyle = '#0a3';
+  ctx.fillRect(0, 0, W, H);
+  
+  // Dirt shoulders
+  ctx.strokeStyle = '#4a2';
+  ctx.lineWidth = ROAD_WIDTH + SHOULDER*2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (let i = 0; i < TRACK_POINTS.length; i++) {
+    const p = TRACK_POINTS[i];
+    const sx = worldToScreenX(p.x);
+    const sy = worldToScreenY(p.y);
+    if (i === 0) ctx.moveTo(sx, sy);
+    else ctx.lineTo(sx, sy);
+  }
+  ctx.lineTo(worldToScreenX(TRACK_POINTS[0].x), worldToScreenY(TRACK_POINTS[0].y));
+  ctx.stroke();
+  
+  // Asphalt road
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = ROAD_WIDTH;
+  ctx.beginPath();
+  for (let i = 0; i < TRACK_POINTS.length; i++) {
+    const p = TRACK_POINTS[i];
+    const sx = worldToScreenX(p.x);
+    const sy = worldToScreenY(p.y);
+    if (i === 0) ctx.moveTo(sx, sy);
+    else ctx.lineTo(sx, sy);
+  }
+  ctx.lineTo(worldToScreenX(TRACK_POINTS[0].x), worldToScreenY(TRACK_POINTS[0].y));
+  ctx.stroke();
+  
+  // White edge lines
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 6;
+  ctx.setLineDash([22, 38]);
+  ctx.beginPath();
+  for (let i = 0; i < TRACK_POINTS.length; i++) {
+    const p = TRACK_POINTS[i];
+    const sx = worldToScreenX(p.x);
+    const sy = worldToScreenY(p.y);
+    if (i === 0) ctx.moveTo(sx, sy);
+    else ctx.lineTo(sx, sy);
+  }
+  ctx.lineTo(worldToScreenX(TRACK_POINTS[0].x), worldToScreenY(TRACK_POINTS[0].y));
+  ctx.stroke();
+  ctx.setLineDash([]);
+  
+  // Finish line
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 12;
+  const fx1 = worldToScreenX(FINISH_X1);
+  const fx2 = worldToScreenX(FINISH_X2);
+  const fy = worldToScreenY(FINISH_Y);
+  ctx.beginPath();
+  ctx.moveTo(fx1, fy - 30);
+  ctx.lineTo(fx2, fy - 30);
+  ctx.moveTo(fx1, fy + 30);
+  ctx.lineTo(fx2, fy + 30);
+  ctx.stroke();
+  
+  ctx.restore();
+}
+
+// ── WORLD <-> SCREEN ─────────────────────────────
+const camX = () => car.wx;
+const camY = () => car.wy;
+function worldToScreenX(wx) { return W/2 + (wx - camX()); }
+function worldToScreenY(wy) { return H/2 + (wy - camY()); }
+
+// ── DRAW CAR ─────────────────────────────────────
+function drawCar() {
+  const sx = W/2;
+  const sy = H/2;
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(car.angle);
+  
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,.4)';
+  ctx.fillRect(-24, 8, 48, 12);
+  
+  // Body
+  ctx.fillStyle = '#c00';
+  ctx.beginPath();
+  ctx.moveTo(-26, -13);
+  ctx.lineTo(26, -13);
+  ctx.lineTo(32, 0);
+  ctx.lineTo(26, 14);
+  ctx.lineTo(-26, 14);
+  ctx.lineTo(-32, 0);
+  ctx.closePath();
+  ctx.fill();
+  
+  // White stripe
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(-18, -9, 36, 5);
+  
+  // Windows
+  ctx.fillStyle = '#112';
+  ctx.fillRect(-14, -9, 14, 8);
+  ctx.fillRect(4, -9, 14, 8);
+  
+  // Wheels
+  ctx.fillStyle = '#111';
+  ctx.fillRect(-22, -15, 9, 7);
+  ctx.fillRect(-22, 8, 9, 7);
+  ctx.fillRect(15, -15, 9, 7);
+  ctx.fillRect(15, 8, 9, 7);
+  
+  // Wheel highlights
+  ctx.fillStyle = '#333';
+  ctx.fillRect(-20, -13, 5, 3);
+  ctx.fillRect(-20, 10, 5, 3);
+  ctx.fillRect(17, -13, 5, 3);
+  ctx.fillRect(17, 10, 5, 3);
+  
+  ctx.restore();
+}
+
+// ── DRAW PARTICLES ───────────────────────────────
+function drawParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.wx += p.vx;
+    p.wy += p.vy;
+    p.vx *= 0.94;
+    p.vy *= 0.94;
+    p.life--;
+    
+    const alpha = Math.max(0, p.life / 30);
+    const sx = worldToScreenX(p.wx);
+    const sy = worldToScreenY(p.wy);
+    
+    ctx.fillStyle = `hsla(${p.hue},70%,45%,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(sx, sy, p.size * (p.life/30), 0, Math.PI*2);
+    ctx.fill();
+    
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+// ── MINIMAP ──────────────────────────────────────
+function drawMiniMap() {
+  mctx.clearRect(0, 0, 140, 140);
+  const scale = 0.035;
+  const offX = 70 - TRACK_POINTS[0].x * scale;
+  const offY = 70 - TRACK_POINTS[0].y * scale;
+  
+  // Track on mini
+  mctx.strokeStyle = '#555';
+  mctx.lineWidth = 11;
+  mctx.beginPath();
+  for (let i = 0; i < TRACK_POINTS.length; i++) {
+    const p = TRACK_POINTS[i];
+    const mx = offX + p.x * scale;
+    const my = offY + p.y * scale;
+    i === 0 ? mctx.moveTo(mx, my) : mctx.lineTo(mx, my);
+  }
+  mctx.lineTo(offX + TRACK_POINTS[0].x * scale, offY + TRACK_POINTS[0].y * scale);
+  mctx.stroke();
+  
+  // Car dot
+  const cx = offX + car.wx * scale;
+  const cy = offY + car.wy * scale;
+  mctx.fillStyle = '#0f0';
+  mctx.beginPath();
+  mctx.arc(cx, cy, 4, 0, Math.PI*2);
+  mctx.fill();
+}
+
+// ── UPDATE PHYSICS ───────────────────────────────
+function update() {
+  if (state !== 'racing') return;
+  globalT++;
+  
+  const accel = keys['ArrowUp'] || keys['w'] ? 0.32 : 0;
+  const brake = keys['ArrowDown'] || keys['s'] ? 0.28 : 0;
+  const steerLeft = keys['ArrowLeft'] || keys['a'];
+  const steerRight = keys['ArrowRight'] || keys['d'];
+  const handbrake = keys[' '];
+  
+  const forwardX = Math.cos(car.angle);
+  const forwardY = Math.sin(car.angle);
+  
+  // Acceleration
+  car.vx += forwardX * accel;
+  car.vy += forwardY * accel;
+  
+  // Braking
+  if (brake) {
+    car.vx -= forwardX * brake;
+    car.vy -= forwardY * brake;
+  }
+  
+  // Handbrake
+  if (handbrake) {
+    car.vx *= 0.82;
+    car.vy *= 0.82;
+    if (Math.hypot(car.vx, car.vy) > 4) playScreech();
+  }
+  
+  // Steering
+  let turn = 0;
+  if (steerLeft) turn -= 1;
+  if (steerRight) turn += 1;
+  
+  const speed = Math.hypot(car.vx, car.vy);
+  const turnRate = turn * 0.048 * (speed < 6 ? 1.4 : 0.75);
+  car.angle += turnRate;
+  
+  // Natural drag
+  car.vx *= 0.965;
+  car.vy *= 0.965;
+  
+  // Surface friction
+  const off = isOffTrack(car.wx, car.wy);
+  if (off) {
+    car.vx *= 0.84;
+    car.vy *= 0.84;
+  }
+  
+  // Move car
+  car.wx += car.vx;
+  car.wy += car.vy;
+  
+  // Dust
+  if ((off || handbrake) && speed > 5 && Math.random() < 0.65) {
+    spawnDust(car.wx - forwardX*22, car.wy - forwardY*22, car.angle);
+  }
+  
+  // Engine sound
+  if (globalT % 4 === 0) {
+    const pitch = Math.min(1, speed / 18);
+    playEngine(pitch);
+  }
+  
+  checkLap();
+}
+
+// ── HUD UPDATE ───────────────────────────────────
+function updateHUD() {
+  const speed = Math.floor(Math.hypot(car.vx, car.vy) * 12);
+  document.getElementById('speed-val').textContent = speed.toString().padStart(3, '0');
+  document.getElementById('speed-fill').style.width = Math.min(100, speed / 2.2) + '%';
+  
+  const seconds = Math.floor((globalT - currentLapStart) / 60);
+  const centi = Math.floor(((globalT - currentLapStart) % 60) * 100 / 60);
+  document.getElementById('time').textContent = `${seconds}:${centi.toString().padStart(2,'0')}`;
+}
+
+// ── MAIN LOOP ────────────────────────────────────
+function frame() {
+  requestAnimationFrame(frame);
+  
+  ctx.fillStyle = '#0a3';
+  ctx.fillRect(0, 0, W, H);
+  
+  if (state === 'title') {
+    // Title background track preview
+    ctx.globalAlpha = 0.2;
+    drawTrack();
+    ctx.globalAlpha = 1;
+    return;
+  }
+  
+  if (state === 'racing') {
+    update();
+    drawTrack();
+    drawParticles();
+    drawCar();
+    drawMiniMap();
+    updateHUD();
+  }
+  
+  if (state === 'finished') {
+    drawTrack();
+    drawParticles();
+    drawCar();
+  }
+}
+requestAnimationFrame(frame);
+
+// ── START / RESTART ──────────────────────────────
+document.getElementById('start-btn').addEventListener('click', () => {
+  initAudio();
+  resetRace();
+  document.getElementById('title-scr').classList.add('off');
+  setTimeout(() => {
+    document.getElementById('title-scr').style.display = 'none';
+  }, 400);
+});
+
+document.getElementById('retry-btn').addEventListener('click', () => {
+  document.getElementById('finish').classList.remove('show');
+  resetRace();
+});
+
+function resetRace() {
+  state = 'racing';
+  car = {
+    wx: TRACK_POINTS[0].x + 40,
+    wy: TRACK_POINTS[0].y + 30,
+    vx: 3,
+    vy: 0,
+    angle: Math.PI * 0.3,
+    lap: 1,
+    lapTime: 0,
+    totalTime: 0,
+    crossedFinish: false
+  };
+  particles = [];
+  globalT = 0;
+  currentLapStart = 0;
+  lapTimes = [0,0,0];
+  document.getElementById('lap-num').textContent = '1';
+  document.getElementById('best-time').textContent = `BEST: ${Math.floor(bestTime/60)}:${Math.floor((bestTime%60)*100/60).toString().padStart(2,'0')}`;
+}
+
+// Init track
+calcTrackLength();
+</script>
+</body>
+</html>
