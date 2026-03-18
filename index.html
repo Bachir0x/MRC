@@ -2,350 +2,291 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>MICRO RALLYCROSS</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dodge - Simple Game</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-  body{margin:0;overflow:hidden;background:#000;font-family:Arial,sans-serif}
-  canvas{display:block}
-  #hud{position:absolute;top:0;left:0;right:0;padding:15px;color:#0f8;pointer-events:none}
-  #speed{font-size:52px;font-weight:900;text-shadow:0 0 20px #0f0}
-  #timer{font-size:22px;margin-top:4px;opacity:0.9}
-  #lap{position:absolute;top:15px;right:20px;font-size:28px;color:#ff8;text-shadow:0 0 15px #ff0}
-  #finish{position:absolute;inset:0;background:rgba(0,0,0,0.95);display:none;flex-direction:column;align-items:center;justify-content:center;color:#fff}
-  #finish.show{display:flex}
-  .big{font-size:62px;font-weight:900;color:#0f0;text-shadow:0 0 30px #0f0}
-  button{margin-top:30px;padding:14px 50px;font-size:15px;background:transparent;border:3px solid #0f0;color:#0f0;cursor:pointer}
-  button:hover{background:#0f0;color:#000}
-  .touch{position:absolute;bottom:20px;right:20px;display:none;gap:12px}
+    body {
+        margin: 0;
+        height: 100vh;
+        background: #0a0015;
+        font-family: Arial, Helvetica, sans-serif;
+        overflow: hidden;
+        color: #e0f0ff;
+    }
+    canvas {
+        display: block;
+    }
+    #ui {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        user-select: none;
+    }
+    #score {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        font-size: 42px;
+        font-weight: bold;
+        text-shadow: 0 0 12px #4488ff;
+    }
+    #gameover {
+        position: absolute;
+        inset: 0;
+        background: rgba(0,0,0,0.85);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #ff6666;
+        font-size: 60px;
+        font-weight: bold;
+        text-shadow: 0 0 20px #000;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.6s;
+    }
+    #gameover.show {
+        opacity: 1;
+        pointer-events: all;
+    }
+    #restart {
+        margin-top: 40px;
+        padding: 16px 48px;
+        font-size: 24px;
+        background: transparent;
+        color: #88aaff;
+        border: 3px solid #88aaff;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    #restart:hover {
+        background: #88aaff;
+        color: #000;
+    }
+    #instructions {
+        position: absolute;
+        bottom: 30px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 18px;
+        opacity: 0.7;
+        pointer-events: none;
+    }
 </style>
 </head>
 <body>
 
-<div id="hud">
-  <div id="speed">000</div>
-  <div id="timer">0:00.00</div>
-</div>
-<div id="lap">LAP <span id="lapnum">1</span>/3</div>
-
-<div id="finish">
-  <div style="font-size:18px;letter-spacing:4px;color:#0a3">STAGE COMPLETE</div>
-  <div class="big" id="finaltime">0:00.00</div>
-  <div id="bestmsg" style="margin:10px 0;font-size:18px;color:#ff0"></div>
-  <button id="restart">RESTART RALLY</button>
+<div id="ui">
+    <div id="score">0</div>
 </div>
 
-<div class="touch" id="touchbtns">
-  <div style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;font-size:28px" id="tup">↑</div>
-  <div style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;font-size:28px" id="tbrake">↓</div>
+<div id="gameover">
+    <div>GAME OVER</div>
+    <div id="finalscore" style="font-size:38px; margin:20px 0; color:#aaccff"></div>
+    <button id="restart">PLAY AGAIN</button>
 </div>
+
+<div id="instructions">← → or A D or touch left/right side</div>
 
 <canvas id="c"></canvas>
 
 <script>
-// =============== MICRO RALLYCROSS – PRO EDITION ===============
+// ────────────────────────────────────────────────
+//  DODGE – very simple endless avoider game
+// ────────────────────────────────────────────────
+
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-let W, H, dt = 0, lastTime = 0;
 
+let W, H;
 function resize() {
-  W = canvas.width = innerWidth;
-  H = canvas.height = innerHeight;
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
 }
 resize();
-addEventListener('resize', resize);
+window.addEventListener('resize', resize);
 
-// ================== INPUT ==================
+let score = 0;
+let gameActive = false;
+let lastTime = 0;
+
+const player = {
+    x: 0,
+    y: 0,
+    w: 50,
+    h: 70,
+    speed: 380
+};
+
+const obstacles = [];
+let nextObstacleTime = 0;
+
 const keys = {};
-const touch = {up:false, brake:false};
 window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
 window.addEventListener('keyup',   e => keys[e.key.toLowerCase()] = false);
 
-// Touch
-if ('ontouchstart' in window) {
-  document.getElementById('touchbtns').style.display = 'flex';
-  const upBtn = document.getElementById('tup');
-  const brakeBtn = document.getElementById('tbrake');
-  upBtn.addEventListener('touchstart', e=>{e.preventDefault();touch.up=true});
-  upBtn.addEventListener('touchend',   e=>{e.preventDefault();touch.up=false});
-  brakeBtn.addEventListener('touchstart', e=>{e.preventDefault();touch.brake=true});
-  brakeBtn.addEventListener('touchend',   e=>{e.preventDefault();touch.brake=false});
+// Touch support — left/right side of screen
+canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (!gameActive) return;
+    const touchX = e.touches[0].clientX;
+    player.targetX = touchX < W/2 ? 80 : W - 80;
+});
+canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    player.targetX = null;
+});
+
+function resetGame() {
+    score = 0;
+    player.x = W/2;
+    player.y = H - 140;
+    player.targetX = null;
+    obstacles.length = 0;
+    nextObstacleTime = 0;
+    gameActive = true;
+    document.getElementById('gameover').classList.remove('show');
+    document.getElementById('score').textContent = "0";
 }
 
-// ================== AUDIO ==================
-let audioCtx;
-function initAudio() {
-  if (audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-}
-function engineSound(pitch) {
-  if (!audioCtx) return;
-  const o = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
-  o.type = 'sawtooth';
-  o.frequency.value = 90 + pitch * 110;
-  g.gain.value = 0.18;
-  o.connect(g); g.connect(audioCtx.destination);
-  o.start();
-  setTimeout(()=>{o.stop();}, 45);
-}
-function screech() {
-  if (!audioCtx) return;
-  const o = audioCtx.createOscillator();
-  o.type = 'sawtooth'; o.frequency.value = 380;
-  const g = audioCtx.createGain();
-  g.gain.value = 0.3;
-  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.7);
-  o.connect(g); g.connect(audioCtx.destination);
-  o.start(); o.stop(audioCtx.currentTime + 0.7);
-}
-
-// ================== CAR & PHYSICS ==================
-let car = {
-  x: 0, y: 0,
-  angle: -Math.PI/2,
-  speed: 0,
-  sideSlip: 0
-};
-
-const MAX_SPEED = 18;
-const TRACK = [
-  {x:-600,y:300},{x:-300,y:-200},{x:100,y:-450},{x:550,y:-200},
-  {x:700,y:250},{x:400,y:550},{x:-200,y:480},{x:-650,y:300}
-];
-
-// ================== PARTICLES ==================
-let particles = [];
-function spawnDust(x, y, angle) {
-  for (let i = 0; i < 7; i++) {
-    const a = angle + Math.PI + (Math.random()-0.5)*1.6;
-    particles.push({
-      x, y,
-      vx: Math.cos(a) * (1.5 + Math.random()*3),
-      vy: Math.sin(a) * (1.5 + Math.random()*3),
-      life: 28 + Math.random()*22,
-      size: 4 + Math.random()*5
+function spawnObstacle() {
+    const size = 50 + Math.random() * 40;
+    const x = 40 + Math.random() * (W - 80);
+    obstacles.push({
+        x: x,
+        y: -size,
+        w: size,
+        h: size,
+        speed: 180 + score * 0.8
     });
-  }
 }
 
-// ================== LAP SYSTEM ==================
-let lap = 1;
-let lapTimes = [];
-let currentLapStart = 0;
-let previousX = 0, previousY = 0;
-const FINISH_X = TRACK[0].x;
-const FINISH_Y = TRACK[0].y;
+function update(dt) {
+    if (!gameActive) return;
 
-// ================== GAME STATE ==================
-let state = 'title';
-let bestTime = localStorage.getItem('rallyBest') || Infinity;
+    score += dt * 12;
+    document.getElementById('score').textContent = Math.floor(score);
 
-// ================== MAIN LOOP ==================
-function loop(time) {
-  if (!lastTime) lastTime = time;
-  dt = Math.min((time - lastTime)/16, 3); // frame independent
-  lastTime = time;
+    // Player movement
+    let dx = 0;
+    if (keys['a'] || keys['arrowleft']) dx -= 1;
+    if (keys['d'] || keys['arrowright']) dx += 1;
 
-  ctx.fillStyle = '#0a2';
-  ctx.fillRect(0,0,W,H);
-
-  if (state === 'title') {
-    // simple title preview
-    ctx.fillStyle = '#0f0';
-    ctx.font = 'bold 52px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('MICRO RALLYCROSS', W/2, H/2 - 40);
-    ctx.font = '20px Arial';
-    ctx.fillText('TAP OR PRESS ANY KEY TO START', W/2, H/2 + 40);
-    requestAnimationFrame(loop);
-    return;
-  }
-
-  // === PHYSICS ===
-  const accel = (keys['w'] || keys['arrowup'] || touch.up) ? 0.45 : 0;
-  const brake = (keys['s'] || keys['arrowdown'] || touch.brake) ? 0.38 : 0;
-  const steer = (keys['a'] || keys['arrowleft'] ? -1 : 0) + (keys['d'] || keys['arrowright'] ? 1 : 0);
-  const handbrake = keys[' '] || false;
-
-  car.speed += accel - brake;
-  car.speed = Math.max(-6, Math.min(MAX_SPEED, car.speed));
-
-  // Steering
-  const turn = steer * 0.065 * (1 - Math.abs(car.speed)/MAX_SPEED * 0.6);
-  car.angle += turn * dt;
-
-  // Real drift physics
-  const fx = Math.cos(car.angle);
-  const fy = Math.sin(car.angle);
-  const forwardForce = car.speed * dt;
-  const sideFriction = handbrake ? 0.12 : 0.78;
-
-  car.x += fx * forwardForce;
-  car.y += fy * forwardForce;
-  car.sideSlip *= sideFriction;
-
-  // Off-road penalty
-  const distFromTrack = Math.abs(Math.hypot(car.x, car.y) - 650);
-  if (distFromTrack > 280) {
-    car.speed *= 0.82;
-    car.sideSlip *= 0.65;
-  }
-
-  // Dust
-  if (Math.abs(car.sideSlip) > 3 || handbrake) {
-    spawnDust(car.x - fx*28, car.y - fy*28, car.angle);
-    if (Math.random() < 0.4) screech();
-  }
-
-  // Particles update
-  for (let i = particles.length-1; i >= 0; i--) {
-    const p = particles[i];
-    p.x += p.vx; p.y += p.vy;
-    p.vx *= 0.94; p.vy *= 0.94;
-    p.life -= dt;
-    if (p.life <= 0) particles.splice(i,1);
-  }
-
-  // Lap crossing
-  const crossed = (previousY < FINISH_Y && car.y > FINISH_Y) &&
-                  Math.abs(car.x - FINISH_X) < 120;
-  if (crossed && Date.now() - currentLapStart > 3000) {
-    lapTimes.push((Date.now() - currentLapStart)/1000);
-    if (lap === 3) {
-      finishRace();
-    } else {
-      lap++;
-      currentLapStart = Date.now();
-      document.getElementById('lapnum').textContent = lap;
+    if (player.targetX !== null) {
+        const diff = player.targetX - player.x;
+        dx = Math.sign(diff) * 1.2;
     }
-  }
-  previousX = car.x; previousY = car.y;
 
-  // Camera follow
-  const camX = car.x;
-  const camY = car.y;
+    player.x += dx * player.speed * dt;
+    player.x = Math.max(40, Math.min(W - 40, player.x));
 
-  // Draw background (parallax mountains)
-  ctx.fillStyle = '#112';
-  ctx.fillRect(0,0,W,H);
-  ctx.fillStyle = '#1a3';
-  for (let i = 0; i < 5; i++) {
-    const px = ((camX*0.1 + i*300) % (W+400)) - 200;
-    ctx.fillRect(px, H*0.6, 280, H);
-  }
+    // Spawn obstacles
+    nextObstacleTime -= dt;
+    if (nextObstacleTime <= 0) {
+        spawnObstacle();
+        nextObstacleTime = 1.1 - Math.min(score / 400, 0.7);
+    }
 
-  // Draw track
-  ctx.save();
-  ctx.translate(W/2 - camX, H/2 - camY);
-  ctx.lineWidth = 260;
-  ctx.strokeStyle = '#3a2';
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  TRACK.forEach((p,i) => i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
-  ctx.lineTo(TRACK[0].x, TRACK[0].y);
-  ctx.stroke();
+    // Move & check obstacles
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        const o = obstacles[i];
+        o.y += o.speed * dt;
 
-  // Asphalt
-  ctx.lineWidth = 140;
-  ctx.strokeStyle = '#444';
-  ctx.beginPath();
-  TRACK.forEach((p,i) => i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
-  ctx.stroke();
+        // Collision
+        if (
+            player.x + player.w/2 > o.x - o.w/2 &&
+            player.x - player.w/2 < o.x + o.w/2 &&
+            player.y + player.h/2 > o.y - o.h/2 &&
+            player.y - player.h/2 < o.y + o.h/2
+        ) {
+            gameActive = false;
+            const final = Math.floor(score);
+            document.getElementById('finalscore').textContent = `Score: ${final}`;
+            document.getElementById('gameover').classList.add('show');
+        }
 
-  // White dashed lines
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = '#ff8';
-  ctx.setLineDash([35, 45]);
-  ctx.beginPath();
-  TRACK.forEach((p,i) => i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  ctx.restore();
-
-  // Draw particles
-  ctx.fillStyle = '#ca8';
-  for (let p of particles) {
-    const alpha = p.life / 40;
-    const sx = W/2 + (p.x - camX);
-    const sy = H/2 + (p.y - camY);
-    ctx.globalAlpha = alpha * 0.8;
-    ctx.fillRect(sx, sy, p.size * alpha, p.size * alpha * 0.6);
-  }
-  ctx.globalAlpha = 1;
-
-  // Draw car
-  ctx.save();
-  ctx.translate(W/2, H/2);
-  ctx.rotate(car.angle);
-  ctx.fillStyle = '#c22';
-  ctx.beginPath();
-  ctx.moveTo(0,-36);
-  ctx.lineTo(26,8);
-  ctx.lineTo(20,32);
-  ctx.lineTo(-20,32);
-  ctx.lineTo(-26,8);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = '#111';
-  ctx.fillRect(-24,-12,10,24);
-  ctx.fillRect(14,-12,10,24);
-
-  ctx.restore();
-
-  // HUD
-  const kmh = Math.floor(Math.abs(car.speed) * 22);
-  document.getElementById('speed').textContent = kmh.toString().padStart(3,'0');
-
-  const totalSec = Math.floor((Date.now() - currentLapStart)/1000);
-  const ms = Math.floor(((Date.now() - currentLapStart)%1000)/10);
-  document.getElementById('timer').textContent = `${totalSec}:${ms.toString().padStart(2,'0')}`;
-
-  requestAnimationFrame(loop);
+        // Remove when off screen
+        if (o.y > H + o.h) {
+            obstacles.splice(i, 1);
+        }
+    }
 }
 
-// ================== FINISH ==================
-function finishRace() {
-  state = 'finished';
-  const final = lapTimes.reduce((a,b)=>a+b,0);
-  const finalStr = `${Math.floor(final)}:${Math.floor((final%1)*100).toString().padStart(2,'0')}`;
+function draw() {
+    ctx.fillStyle = "#0a0015";
+    ctx.fillRect(0, 0, W, H);
 
-  document.getElementById('finaltime').textContent = finalStr;
-  const msg = document.getElementById('bestmsg');
+    // Stars background
+    ctx.fillStyle = "#ffffff";
+    for (let i = 0; i < 80; i++) {
+        const x = (Math.sin(i * 7.3) * W * 0.4 + W/2 + Date.now() * 0.0003 * (i+10)) % W;
+        const y = (Math.cos(i * 11.1) * H * 0.4 + H/2 + Date.now() * 0.0004 * (i+30)) % H;
+        const size = 1.2 + Math.sin(Date.now() * 0.001 + i) * 0.6;
+        ctx.globalAlpha = 0.4 + Math.sin(Date.now() * 0.0015 + i * 2) * 0.6;
+        ctx.fillRect(x, y, size, size);
+    }
+    ctx.globalAlpha = 1;
 
-  if (final < bestTime) {
-    bestTime = final;
-    localStorage.setItem('rallyBest', bestTime);
-    msg.innerHTML = '🏆 NEW PERSONAL BEST!';
-  } else {
-    msg.innerHTML = `BEST: ${Math.floor(bestTime)}:${Math.floor((bestTime%1)*100).toString().padStart(2,'0')}`;
-  }
+    // Player ship
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.fillStyle = "#88ccff";
+    ctx.beginPath();
+    ctx.moveTo(0, -player.h/2);
+    ctx.lineTo(-player.w/2, player.h/2);
+    ctx.lineTo(player.w/2, player.h/2);
+    ctx.closePath();
+    ctx.fill();
 
-  document.getElementById('finish').classList.add('show');
+    // Glow
+    ctx.shadowColor = "#4488ff";
+    ctx.shadowBlur = 25;
+    ctx.fillStyle = "rgba(68,136,255,0.4)";
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.restore();
+
+    // Obstacles
+    for (const o of obstacles) {
+        ctx.fillStyle = "#ff4444";
+        ctx.fillRect(o.x - o.w/2, o.y - o.h/2, o.w, o.h);
+
+        // Glow
+        ctx.shadowColor = "#ff0000";
+        ctx.shadowBlur = 15;
+        ctx.fillStyle = "rgba(255,60,60,0.35)";
+        ctx.fillRect(o.x - o.w/2, o.y - o.h/2, o.w, o.h);
+        ctx.shadowBlur = 0;
+    }
 }
 
-// ================== START / RESTART ==================
-function startGame() {
-  initAudio();
-  car = {x: TRACK[0].x+40, y: TRACK[0].y+30, angle: -1.2, speed: 3, sideSlip: 0};
-  lap = 1;
-  lapTimes = [];
-  currentLapStart = Date.now();
-  particles = [];
-  state = 'racing';
-  document.getElementById('lapnum').textContent = '1';
-  document.getElementById('finish').classList.remove('show');
+function gameLoop(time = 0) {
+    const dt = Math.min((time - lastTime) / 1000, 0.1);
+    lastTime = time;
+
+    update(dt);
+    draw();
+
+    requestAnimationFrame(gameLoop);
 }
 
-document.getElementById('restart').onclick = startGame;
-
-// Click anywhere or press key to start
-document.body.onclick = document.body.onkeydown = () => {
-  if (state === 'title') startGame();
+// Start / restart
+document.getElementById('restart').onclick = () => {
+    resetGame();
+    gameActive = true;
 };
 
-requestAnimationFrame(loop);
+document.body.onclick = () => {
+    if (!gameActive) {
+        resetGame();
+    }
+};
+
+resetGame();
+gameLoop();
 </script>
 </body>
 </html>
